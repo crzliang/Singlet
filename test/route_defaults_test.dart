@@ -126,6 +126,44 @@ void main() {
     expect(rules.any((e) => e['ip_is_private'] == true), isFalse);
   });
 
+  test('process_name custom rule enables find_process', () {
+    final config = <String, dynamic>{
+      'outbounds': [
+        {'type': 'direct', 'tag': 'direct'},
+        {'type': 'selector', 'tag': 'proxy', 'outbounds': ['direct']},
+      ],
+      'route': {'final': 'proxy'},
+    };
+    DnsDefaults.applyToConfig(config, proxyDetour: 'proxy');
+    RouteDefaults.applyToConfig(
+      config,
+      proxyOutbound: 'proxy',
+      route: BypassRouteSettings(
+        enabled: true,
+        chinaDirect: false,
+        customRules: [
+          const CustomRouteRule(
+            id: 'wx',
+            match: CustomRuleMatch.processName,
+            value: 'WeChat',
+            outbound: CustomRuleOutbound.direct,
+          ),
+        ],
+      ),
+    );
+    final route = config['route'] as Map;
+    expect(route['find_process'], isTrue);
+    final sets = (route['rule_set'] as List).cast<Map>();
+    final inline = sets.firstWhere(
+      (e) => '${e['tag']}'.startsWith(RouteDefaults.customTagPrefix),
+    );
+    expect(inline['type'], 'inline');
+    expect(
+      (inline['rules'] as List).first,
+      {'process_name': ['WeChat']},
+    );
+  });
+
   test('custom rules keep list order ahead of cn', () {
     final config = <String, dynamic>{
       'outbounds': [

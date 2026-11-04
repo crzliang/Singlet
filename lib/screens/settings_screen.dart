@@ -6,6 +6,7 @@ import '../services/helper_channel.dart';
 import '../services/rule_set_store.dart';
 import '../services/singbox_core_channel.dart';
 import '../services/system_proxy_channel.dart';
+import '../services/tun_config.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -155,28 +156,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final path = await widget.configStore.resolveDefaultConfigPath();
       await widget.configStore.reapplyUserSettings(path: path, route: route);
 
-      // Reload core so new local .srs take effect.
-      try {
-        final tun = await widget.helper.tunStatus();
-        if (tun.reachable && tun.running) {
-          await widget.helper.tunStop();
-        }
-      } catch (_) {}
-      var reloaded = false;
-      try {
-        if (await widget.core.isRunning()) {
-          await widget.core.applyConfig(path);
-          reloaded = true;
-        } else {
-          await widget.core.applyConfig(path);
-          reloaded = true;
-        }
-      } catch (_) {}
+      final suffix = await _reloadCoreAfterRouteChange(path);
 
       await _loadRuleSetMeta();
       if (!mounted) return;
       setState(() => _ruleSetUpdating = false);
-      final suffix = reloaded ? '；内核已重载' : '；请手动重新连接内核';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -190,6 +174,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('更新失败: $e')),
       );
+    }
+  }
+
+  /// Reload running core (TUN helper or in-app) so route changes take effect.
+  Future<String> _reloadCoreAfterRouteChange(String path) async {
+    try {
+      final tun = await widget.helper.tunStatus();
+      if (tun.reachable && tun.running) {
+        // Helper start waits for ports after stopping in-app core only;
+        // must stop helper first or 7890/9090 stay held.
+        await widget.helper.tunStop();
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        try {
+          if (await widget.core.isRunning()) {
+            await widget.core.stop();
+          }
+        } catch (_) {}
+        final tunPath = await TunConfig.writeTunVariant(path);
+        final port = await TunConfig.mixedPortFromConfig(path);
+        await widget.helper.tunStart(
+          configPath: tunPath,
+          clashApiBaseUrl: 'http://127.0.0.1:9090',
+          httpPort: port,
+          apiPort: 9090,
+        );
+        return '；TUN 已重载';
+      }
+    } catch (_) {
+      return '；TUN 重载失败，请到首页开关一次 TUN';
+    }
+    try {
+      await widget.core.applyConfig(path);
+      return '；内核已重载';
+    } catch (_) {
+      return '；请手动重新连接内核';
     }
   }
 
@@ -219,10 +238,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final current = await _settingsStore.load();
       await _settingsStore.save(current.copyWith(route: next));
       await widget.configStore.reapplyUserSettings(route: next);
+      final path = await widget.configStore.resolveDefaultConfigPath();
+      final suffix = await _reloadCoreAfterRouteChange(path);
       if (!mounted) return;
       setState(() => _routeSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('分流规则已保存；重新连接后生效')),
+        SnackBar(content: Text('分流规则已保存$suffix')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -699,7 +720,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 Text(
                   '优先于国内直连 / 广告规则。列表从上到下匹配；'
-                  '出站「代理」指向当前策略组。',
+                  '出站「代理」指向当前策略组。'
+                  '「进程名」填写可执行文件名（如 WeChat），TUN 下常用作直连。',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
@@ -1078,7 +1100,9 @@ class _CustomRuleDialogState extends State<_CustomRuleDialog> {
               decoration: InputDecoration(
                 labelText: '匹配内容',
                 hintText: _match.hint,
-                helperText: '多个值可用逗号或换行分隔',
+                helperText: _match == CustomRuleMatch.processName
+                    ? '可执行文件名（活动监视器里的进程名），如 WeChat；可用逗号分隔多个'
+                    : '多个值可用逗号或换行分隔',
                 border: const OutlineInputBorder(),
               ),
             ),

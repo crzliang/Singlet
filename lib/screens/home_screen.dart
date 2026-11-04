@@ -319,8 +319,14 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         } catch (_) {}
         final basePath = await _prepareConfigPath();
-        final tunPath = await TunConfig.writeTunVariant(basePath);
         final port = await TunConfig.mixedPortFromConfig(basePath);
+        final free = await _waitPortsBindable([port, 9090], attempts: 40);
+        if (!free) {
+          throw StateError(
+            '端口 $port/9090 仍被占用，无法开启 TUN。请先断开再重试',
+          );
+        }
+        final tunPath = await TunConfig.writeTunVariant(basePath);
         await widget.helper.tunStart(
           configPath: tunPath,
           clashApiBaseUrl: 'http://127.0.0.1:9090',
@@ -387,16 +393,28 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {}
     if (mounted) setState(() => _tunEnabled = false);
 
+    // Also drop any leftover in-app listener before probing bind.
+    try {
+      if (await widget.core.isRunning()) {
+        await widget.core.stop();
+      }
+    } catch (_) {}
+
     final path = await _prepareConfigPath();
     final mixed = await TunConfig.mixedPortFromConfig(path);
     final ports = <int>{mixed, 9090}.toList();
 
-    var free = await _waitPortsBindable(ports);
+    var free = await _waitPortsBindable(ports, attempts: 40);
     if (!free) {
       try {
         await widget.helper.tunStop();
       } catch (_) {}
-      free = await _waitPortsBindable(ports, attempts: 40);
+      try {
+        if (await widget.core.isRunning()) {
+          await widget.core.stop();
+        }
+      } catch (_) {}
+      free = await _waitPortsBindable(ports, attempts: 60);
     }
     if (!free) {
       throw StateError(
@@ -421,11 +439,13 @@ class _HomeScreenState extends State<HomeScreen> {
   /// True when we can bind 127.0.0.1:port (stronger than connect-refused).
   Future<bool> _waitPortsBindable(
     List<int> ports, {
-    int attempts = 25,
+    int attempts = 40,
   }) async {
     for (var i = 0; i < attempts; i++) {
       if (await _canBindPorts(ports)) return true;
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+      // Back off a bit — Helper SingletStop can lag on busy TUN teardown.
+      final ms = i < 10 ? 50 : (i < 30 ? 100 : 150);
+      await Future<void>.delayed(Duration(milliseconds: ms));
     }
     return _canBindPorts(ports);
   }

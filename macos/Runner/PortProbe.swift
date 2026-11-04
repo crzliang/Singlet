@@ -39,17 +39,18 @@ enum PortProbe {
   }
 
   /// Wait until ports are free, periodically forcing in-app core stop.
-  static func waitUntilFree(ports: [Int], attempts: Int = 20, sleepMs: UInt32 = 50)
+  static func waitUntilFree(ports: [Int], attempts: Int = 40, sleepMs: UInt32 = 80)
     -> Bool
   {
-    for _ in 0..<attempts {
+    for i in 0..<attempts {
       if !ports.contains(where: isLocalListening) {
         return true
       }
       if SingBoxCoreLoader.shared.isRunning() {
         try? SingBoxCoreLoader.shared.stop()
       }
-      usleep(sleepMs * 1000)
+      let ms = i < 15 ? sleepMs : sleepMs * 2
+      usleep(ms * 1000)
     }
     return !ports.contains(where: isLocalListening)
   }

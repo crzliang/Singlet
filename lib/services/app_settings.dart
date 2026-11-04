@@ -275,7 +275,7 @@ extension CustomRuleMatchX on CustomRuleMatch {
         CustomRuleMatch.domain => 'www.google.com',
         CustomRuleMatch.domainKeyword => 'google',
         CustomRuleMatch.ipCidr => '1.1.1.1/32',
-        CustomRuleMatch.processName => 'curl',
+        CustomRuleMatch.processName => 'WeChat',
       };
 
   static CustomRuleMatch fromWire(String? raw) {

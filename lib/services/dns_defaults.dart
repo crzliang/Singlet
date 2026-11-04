@@ -68,7 +68,9 @@ class DnsDefaults {
           },
       ],
       'final': remotePrimary ?? localPrimary,
-      'strategy': 'prefer_ipv4',
+      // ipv4_only: macOS TUN often has no working IPv6 uplink; prefer_ipv4 still
+      // returns AAAA and apps like WeChat Moments stick to broken v6 dials.
+      'strategy': 'ipv4_only',
       'independent_cache': true,
     };
   }
@@ -125,7 +127,7 @@ class DnsDefaults {
         : systemTag;
     route['default_domain_resolver'] = {
       'server': localPrimary,
-      'strategy': 'prefer_ipv4',
+      'strategy': 'ipv4_only',
     };
     config['route'] = route;
   }

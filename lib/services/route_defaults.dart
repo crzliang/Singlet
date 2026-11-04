@@ -196,6 +196,15 @@ class RouteDefaults {
     rules.insertAll(insertAt, injected);
     routeMap['rules'] = rules;
     routeMap.putIfAbsent('final', () => proxy);
+    // Process rules need lookup; enable explicitly when any process_name rule is on.
+    final hasProcess = route.customRules.any(
+      (r) => r.enabled && r.match == CustomRuleMatch.processName,
+    );
+    if (hasProcess) {
+      routeMap['find_process'] = true;
+    } else {
+      routeMap.remove('find_process');
+    }
     config['route'] = routeMap;
 
     _ensureCacheFile(
@@ -266,6 +275,8 @@ class RouteDefaults {
     final route = config['route'];
     if (route is! Map) return;
     final routeMap = Map<String, dynamic>.from(route);
+    // Cleared here; re-applied when process custom rules are present.
+    routeMap.remove('find_process');
 
     final sets = <Map<String, dynamic>>[];
     final rawSets = routeMap['rule_set'];

@@ -36,7 +36,7 @@ void main() {
     final tun = inbounds.cast<Map>().firstWhere((e) => e['type'] == 'tun');
     final address = (tun['address'] as List).map((e) => '$e').toList();
     expect(address, contains(TunConfig.tunInet4));
-    expect(address, contains(TunConfig.tunInet6));
+    expect(address, isNot(contains(TunConfig.tunInet6)));
     expect(TunConfig.tunDnsServers, contains('1.1.1.1'));
     expect(tun['stack'], 'mixed');
     expect(map['route']['auto_detect_interface'], isTrue);

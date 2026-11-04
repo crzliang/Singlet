@@ -12,6 +12,10 @@ class TunConfig {
   static const defaultMixedPort = 7890;
 
   /// TUN addresses (sing-box 1.12 `address`).
+  ///
+  /// IPv4-only on purpose: many Mac networks have no usable IPv6 route. Taking
+  /// IPv6 into utun then `direct`-dialing (e.g. WeChat Moments CDN `2409:…`)
+  /// fails with `no route to host`. Keep [tunInet6] for optional future use.
   static const tunInet4 = '172.19.0.1/30';
   static const tunInet6 = 'fdfe:dcba:9876::1/126';
 
@@ -79,7 +83,8 @@ class TunConfig {
     inbounds.insert(0, {
       'type': 'tun',
       'tag': tunTag,
-      'address': [tunInet4, tunInet6],
+      // IPv4 only — see [tunInet4] docs (WeChat Moments IPv6 direct fails).
+      'address': [tunInet4],
       // 1500 avoids macOS utun + large-MTU UDP DNS oddities.
       'mtu': 1500,
       'auto_route': true,

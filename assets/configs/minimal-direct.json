@@ -16,7 +16,7 @@
       }
     ],
     "final": "local-dns",
-    "strategy": "prefer_ipv4",
+    "strategy": "ipv4_only",
     "independent_cache": true
   },
   "inbounds": [
@@ -51,7 +51,7 @@
     "final": "direct",
     "default_domain_resolver": {
       "server": "local-dns",
-      "strategy": "prefer_ipv4"
+      "strategy": "ipv4_only"
     }
   },
   "experimental": {
