@@ -91,6 +91,7 @@ class _AppShellState extends State<AppShell> {
         clashApi: widget.clashApi,
         profileStore: widget.profileStore,
         refreshToken: _proxiesRefreshToken,
+        activeProfileId: widget.profileStore.activeId,
       ),
       ConnectionsScreen(clashApi: widget.clashApi),
       SettingsScreen(

@@ -7,18 +7,23 @@ import '../utils/proxy_region_flag.dart';
 
 /// Clash Verge–style proxy grid (Material 3).
 ///
-/// Node list always follows [ProfileStore.activeProfile].
+/// Group/member lists follow the **selected subscription file**. Clash API is
+/// only used to overlay live `now` / delay when it still matches that file.
 class ProxiesScreen extends StatefulWidget {
   const ProxiesScreen({
     super.key,
     required this.clashApi,
     required this.profileStore,
     this.refreshToken = 0,
+    this.activeProfileId,
   });
 
   final ClashApiClient clashApi;
   final ProfileStore profileStore;
   final int refreshToken;
+
+  /// Primitive so [didUpdateWidget] sees subscription switches on a shared store.
+  final String? activeProfileId;
 
   @override
   State<ProxiesScreen> createState() => _ProxiesScreenState();
@@ -47,8 +52,7 @@ class _ProxiesScreenState extends State<ProxiesScreen> {
   @override
   void didUpdateWidget(covariant ProxiesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final activeChanged =
-        oldWidget.profileStore.activeId != widget.profileStore.activeId;
+    final activeChanged = oldWidget.activeProfileId != widget.activeProfileId;
     if (oldWidget.refreshToken != widget.refreshToken || activeChanged) {
       _reload();
     }
@@ -61,6 +65,52 @@ class _ProxiesScreenState extends State<ProxiesScreen> {
     return n.contains('占位') || n.contains('不可用') || n.contains('无代理');
   }
 
+  /// True when live API groups look like the selected subscription (not another).
+  bool _apiMatchesFile(
+    List<ClashProxyGroup> apiGroups,
+    List<ClashProxyGroup> fileGroups,
+  ) {
+    if (apiGroups.isEmpty || fileGroups.isEmpty) return false;
+    final fileByName = {for (final g in fileGroups) g.name: g};
+    var matchedGroups = 0;
+    var memberHits = 0;
+    var memberTotal = 0;
+    for (final g in apiGroups) {
+      final file = fileByName[g.name];
+      if (file == null) continue;
+      matchedGroups++;
+      final fileMembers = file.all.toSet();
+      for (final m in g.all) {
+        memberTotal++;
+        if (fileMembers.contains(m)) memberHits++;
+      }
+    }
+    if (matchedGroups == 0) return false;
+    // At least half of file groups present, and most shared members overlap.
+    if (matchedGroups < (fileGroups.length / 2).ceil()) return false;
+    if (memberTotal == 0) return matchedGroups == fileGroups.length;
+    return memberHits * 2 >= memberTotal;
+  }
+
+  List<ClashProxyGroup> _overlayLiveNow(
+    List<ClashProxyGroup> fileGroups,
+    List<ClashProxyGroup> apiGroups,
+  ) {
+    final apiByName = {for (final g in apiGroups) g.name: g};
+    return fileGroups.map((g) {
+      final live = apiByName[g.name];
+      if (live == null) return g;
+      final now = live.now;
+      if (now.isEmpty || !g.all.contains(now)) return g;
+      return ClashProxyGroup(
+        name: g.name,
+        type: g.type,
+        now: now,
+        all: g.all,
+      );
+    }).toList();
+  }
+
   Future<void> _reload() async {
     setState(() {
       _loading = true;
@@ -69,7 +119,7 @@ class _ProxiesScreenState extends State<ProxiesScreen> {
 
     await widget.profileStore.load();
     final active = widget.profileStore.activeProfile;
-    final activeId = active?.id;
+    final activeId = active?.id ?? widget.activeProfileId;
     final profileLabel = active?.name;
 
     // Reset group selection when subscription changes.
@@ -85,21 +135,44 @@ class _ProxiesScreenState extends State<ProxiesScreen> {
         ? null
         : await ProfileProxyLoader.fromConfigPath(path);
 
-    var catalog = await widget.clashApi.fetchProxyCatalog();
-    var groups = catalog.groups;
-    var nodes = catalog.nodes;
-    var fromApi = catalog.reachable && !_isPlaceholder(groups);
+    final catalog = await widget.clashApi.fetchProxyCatalog();
+    final apiLive =
+        catalog.reachable && !_isPlaceholder(catalog.groups);
 
-    // API still on old config / empty → fall back to selected profile file.
-    if (!fromApi && fromFile != null) {
-      groups = fromFile.groups;
-      nodes = fromFile.nodes;
-      fromApi = false;
-    } else if (fromApi && fromFile != null) {
-      // Prefer API (live now/delay) but ensure leaf types from file fill gaps.
-      final merged = Map<String, ClashProxyNode>.from(fromFile.nodes);
-      merged.addAll(nodes);
-      nodes = merged;
+    late final List<ClashProxyGroup> groups;
+    late final Map<String, ClashProxyNode> nodes;
+    var coreFollowsSelection = false;
+    var previewOnly = false;
+
+    if (fromFile != null && !_isPlaceholder(fromFile.groups)) {
+      // Selected subscription file is the source of truth for membership.
+      nodes = Map<String, ClashProxyNode>.from(fromFile.nodes);
+      if (apiLive && _apiMatchesFile(catalog.groups, fromFile.groups)) {
+        groups = _overlayLiveNow(fromFile.groups, catalog.groups);
+        coreFollowsSelection = true;
+        for (final e in catalog.nodes.entries) {
+          final existing = nodes[e.key];
+          if (existing == null) continue;
+          if (e.value.delayMs != null) {
+            nodes[e.key] = ClashProxyNode(
+              name: e.key,
+              type: existing.type,
+              delayMs: e.value.delayMs,
+            );
+          }
+        }
+      } else {
+        groups = fromFile.groups;
+        previewOnly = true;
+      }
+    } else if (apiLive) {
+      // No usable local file — last resort: show whatever the core has.
+      groups = catalog.groups;
+      nodes = catalog.nodes;
+      coreFollowsSelection = true;
+    } else {
+      groups = const [];
+      nodes = const {};
     }
 
     final realGroups = _isPlaceholder(groups) ? const <ClashProxyGroup>[] : groups;
@@ -143,7 +216,11 @@ class _ProxiesScreenState extends State<ProxiesScreen> {
         _hint = '请先在「订阅」选择一个配置。';
       } else if (realGroups.isEmpty) {
         _hint = '「${active.name}」暂无节点，请同步或重新导入。';
-      } else if (!fromApi) {
+      } else if (previewOnly && apiLive) {
+        _hint = '显示「${active.name}」；内核仍是其他订阅，请回「订阅」再点选用或开连接。';
+      } else if (previewOnly) {
+        _hint = '显示「${active.name}」配置（内核未连接时为本地预览）。';
+      } else if (!coreFollowsSelection) {
         _hint = '显示「${active.name}」配置（内核未连接时为本地预览）。';
       } else {
         _hint = null;
@@ -406,6 +483,7 @@ class _ProxyCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final flag = ProxyRegionFlag.flagFor(name);
     final title = ProxyRegionFlag.displayName(name, type: type);
     final delayText = delayMs == null
         ? ''
@@ -427,13 +505,24 @@ class _ProxyCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (flag != null) ...[
+                    Text(flag, style: const TextStyle(fontSize: 20, height: 1.1)),
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                     ),
+                  ),
+                ],
               ),
               const Spacer(),
               Row(

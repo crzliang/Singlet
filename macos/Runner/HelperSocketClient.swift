@@ -26,8 +26,11 @@ enum HelperSocketClient {
     ], timeout: 60)
   }
 
-  static func stopTun() throws -> [String: Any] {
-    try request(["op": "stop"], timeout: 5)
+  /// Stop helper core and wait for it to release mixed/Clash listen ports.
+  /// Close() under TUN can exceed several seconds — timeout must cover that
+  /// plus the helper's post-stop port drain, or the app handoff races.
+  static func stopTun(ports: [Int] = [7890, 9090]) throws -> [String: Any] {
+    try request(["op": "stop", "ports": ports], timeout: 45)
   }
 
   /// Best-effort stop on app quit.

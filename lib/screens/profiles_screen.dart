@@ -155,7 +155,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     if (tun.reachable && tun.running) {
       final tunPath = await TunConfig.writeTunVariant(path);
       final port = await TunConfig.mixedPortFromConfig(path);
-      await widget.helper.tunStop();
+      await widget.helper.tunStop(httpPort: port, apiPort: 9090);
       await widget.helper.tunStart(
         configPath: tunPath,
         clashApiBaseUrl: 'http://127.0.0.1:9090',

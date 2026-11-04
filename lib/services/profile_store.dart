@@ -195,7 +195,12 @@ class ProfileStore {
       await _configStore.sanitizeConfigFile(file);
       return file.path;
     }
-    return _configStore.resolveDefaultConfigPath();
+    // Do not fall back to another profile's shared draft — that shows B's
+    // nodes while A is selected.
+    if (p.resolvedConfigFileName == ConfigStore.draftFileName) {
+      return _configStore.resolveDefaultConfigPath();
+    }
+    return null;
   }
 
   static String _nameFromUrl(String url) {

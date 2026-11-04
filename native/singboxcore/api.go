@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"runtime"
 	"unsafe"
+
+	"github.com/liang/singlet/native/singboxcore/dnscount"
 )
 
 func dupCString(s string) *C.char {
@@ -90,11 +92,12 @@ func SingletMemoryJSON() *C.char {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	payload, _ := json.Marshal(map[string]any{
-		"inuse":   ms.HeapInuse,
-		"oslimit": ms.Sys,
-		"sys":     ms.Sys,
-		"alloc":   ms.Alloc,
-		"source":  "runtime.MemStats",
+		"inuse":      ms.HeapInuse,
+		"oslimit":    ms.Sys,
+		"sys":        ms.Sys,
+		"alloc":      ms.Alloc,
+		"source":     "runtime.MemStats",
+		"dnsQueries": dnscount.QueryTotal.Load(),
 	})
 	return dupCString(string(payload))
 }

@@ -140,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Stale Helper "running" without API → stop then start in-app.
     if (tun?.running == true) {
       try {
-        await widget.helper.tunStop();
+        await widget.helper.tunStop(httpPort: 7890, apiPort: 9090);
       } catch (_) {}
       if (mounted) setState(() => _tunEnabled = false);
     }
@@ -222,14 +222,14 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final tun = await widget.helper.tunStatus();
       if (tun.reachable && (tun.running || _tunEnabled)) {
-        await widget.helper.tunStop();
+        await widget.helper.tunStop(httpPort: 7890, apiPort: 9090);
         if (mounted) setState(() => _tunEnabled = false);
       }
     } catch (_) {
       // Helper 未装 / 不可达时忽略
     }
-    // Best-effort: wait briefly so bind is not racing Helper teardown.
-    await _waitPortsBindable(const [9090], attempts: 15);
+    // Best-effort: wait so bind is not racing Helper teardown.
+    await _waitPortsBindable(const [7890, 9090], attempts: 40);
   }
 
   Future<void> _toggleCore() async {
@@ -240,7 +240,9 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       if (_running || _tunEnabled) {
         if (_tunEnabled) {
-          await widget.helper.tunStop();
+          final path = await _configPath();
+          final port = await TunConfig.mixedPortFromConfig(path);
+          await widget.helper.tunStop(httpPort: port, apiPort: 9090);
           if (mounted) setState(() => _tunEnabled = false);
         }
         if (await widget.core.isRunning()) {
@@ -377,10 +379,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
-      // Never leave the user with neither Helper nor in-app core.
-      try {
-        await _handoffHelperToInAppCore();
-      } catch (_) {}
+      // Only recover when *enabling* TUN failed mid-way — re-running handoff
+      // after a failed disable stacks more stop/Close and makes the race worse.
+      if (enable) {
+        try {
+          await _handoffHelperToInAppCore();
+        } catch (_) {}
+      }
     } finally {
       if (mounted) setState(() => _tunBusy = false);
     }
@@ -388,8 +393,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// Stop Helper-owned core, wait for Mixed/Clash ports, start in-app core.
   Future<void> _handoffHelperToInAppCore() async {
+    final path = await _prepareConfigPath();
+    final mixed = await TunConfig.mixedPortFromConfig(path);
+    final ports = <int>{mixed, 9090}.toList();
+
     try {
-      await widget.helper.tunStop();
+      await widget.helper.tunStop(httpPort: mixed, apiPort: 9090);
     } catch (_) {}
     if (mounted) setState(() => _tunEnabled = false);
 
@@ -400,21 +409,18 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (_) {}
 
-    final path = await _prepareConfigPath();
-    final mixed = await TunConfig.mixedPortFromConfig(path);
-    final ports = <int>{mixed, 9090}.toList();
-
-    var free = await _waitPortsBindable(ports, attempts: 40);
+    // Helper stop already drains ports; keep a generous local bind probe.
+    var free = await _waitPortsBindable(ports, attempts: 80);
     if (!free) {
       try {
-        await widget.helper.tunStop();
+        await widget.helper.tunStop(httpPort: mixed, apiPort: 9090);
       } catch (_) {}
       try {
         if (await widget.core.isRunning()) {
           await widget.core.stop();
         }
       } catch (_) {}
-      free = await _waitPortsBindable(ports, attempts: 60);
+      free = await _waitPortsBindable(ports, attempts: 100);
     }
     if (!free) {
       throw StateError(
@@ -443,8 +449,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }) async {
     for (var i = 0; i < attempts; i++) {
       if (await _canBindPorts(ports)) return true;
-      // Back off a bit — Helper SingletStop can lag on busy TUN teardown.
-      final ms = i < 10 ? 50 : (i < 30 ? 100 : 150);
+      // Back off — Helper SingletStop + TUN teardown can take many seconds.
+      final ms = i < 20 ? 50 : (i < 50 ? 100 : 200);
       await Future<void>.delayed(Duration(milliseconds: ms));
     }
     return _canBindPorts(ports);
@@ -494,11 +500,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final connF = widget.clashApi.fetchConnections();
     final cfgF = widget.clashApi.fetchConfigs();
     final memF = _resolveMemory();
+    final dnsF = _resolveDnsQueries();
 
     final traffic = await trafficF;
     final conn = await connF;
     final cfg = await cfgF;
     final mem = await memF;
+    final dnsQueries = await dnsF;
     if (!mounted) return;
 
     setState(() {
@@ -512,7 +520,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _connLive = conn.reachable;
       _connCount = conn.count;
       _connTotalSeen = conn.totalSeen;
-      _dnsActive = conn.dnsActive;
+      // Prefer engine counter: Clash /connections filters OutboundType DNS.
+      _dnsActive = dnsQueries ?? conn.dnsActive;
       _upTotal = conn.uploadTotal;
       _downTotal = conn.downloadTotal;
 
@@ -555,6 +564,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return (coreInuse, '内核 MemStats');
     }
     return (null, '');
+  }
+
+  /// Cumulative DNS Exchange count from embedded core (works with hijack-dns).
+  Future<int?> _resolveDnsQueries() async {
+    if (_tunEnabled && _helperInstalled) {
+      final tun = await widget.helper.tunStatus();
+      if (tun.dnsQueries != null) return tun.dnsQueries;
+    }
+    final coreMem = await widget.core.memory();
+    return _asMemInt(coreMem['dnsQueries']);
   }
 
   static int? _asMemInt(dynamic v) {
@@ -1315,7 +1334,7 @@ class _StatsCard extends StatelessWidget {
           VerticalDivider(color: scheme.outlineVariant),
           _stat(context, '最近请求', '$totalSeen', '自启动累计'),
           VerticalDivider(color: scheme.outlineVariant),
-          _stat(context, 'DNS 查询', '$dnsActive', '当前疑似 DNS'),
+          _stat(context, 'DNS 查询', '$dnsActive', '启动以来累计'),
         ],
       ),
     );

@@ -189,15 +189,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (tun.reachable && tun.running) {
         // Helper start waits for ports after stopping in-app core only;
         // must stop helper first or 7890/9090 stay held.
-        await widget.helper.tunStop();
-        await Future<void>.delayed(const Duration(milliseconds: 400));
+        final port = await TunConfig.mixedPortFromConfig(path);
+        await widget.helper.tunStop(httpPort: port, apiPort: 9090);
         try {
           if (await widget.core.isRunning()) {
             await widget.core.stop();
           }
         } catch (_) {}
         final tunPath = await TunConfig.writeTunVariant(path);
-        final port = await TunConfig.mixedPortFromConfig(path);
         await widget.helper.tunStart(
           configPath: tunPath,
           clashApiBaseUrl: 'http://127.0.0.1:9090',

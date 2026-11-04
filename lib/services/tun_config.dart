@@ -19,13 +19,15 @@ class TunConfig {
   static const tunInet4 = '172.19.0.1/30';
   static const tunInet6 = 'fdfe:dcba:9876::1/126';
 
-  /// Public DNS bait for macOS system resolver.
+  /// System DNS pointed at the TUN peer (`172.19.0.1/30` → `.2`).
   ///
-  /// LAN DHCP DNS never enters TUN, so we point the OS at a public resolver
-  /// (UDP/53). `auto_route` pulls those packets into TUN and `hijack-dns`
-  /// answers them via sing-box DNS — the real 1.1.1.1 UDP server is never
-  /// contacted. DoH (`https://1.1.1.1/dns-query`) stays a separate path.
-  static const tunDnsServers = <String>['1.1.1.1'];
+  /// Must be an address that only exists on the utun interface. Using a public
+  /// bait like `1.1.1.1` lets macOS `mDNSResponder` reach the real server on
+  /// the physical NIC and bypass hijack-dns (apps resolve while the panel
+  /// stays at 0; dig/nslookup still enter TUN). Queries to [tunDnsPeer] are
+  /// answered by route `hijack-dns` — nothing listens on `.2` itself.
+  static const tunDnsPeer = '172.19.0.2';
+  static const tunDnsServers = <String>[tunDnsPeer];
 
   /// Prefer mixed, then http, then socks listen_port (fallback settings default).
   static Future<int> mixedPortFromConfig(String path) async {

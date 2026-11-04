@@ -17,6 +17,7 @@ import (
 	sjson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
 
+	"github.com/liang/singlet/native/singboxcore/dnscount"
 	"github.com/liang/singlet/native/singboxcore/dnsgroup"
 )
 
@@ -103,6 +104,7 @@ func startBox(path, clashBase string) error {
 	// Custom registry so we can add singlet-group (multi-DNS race/fallback/rr).
 	dnsRegistry := include.DNSTransportRegistry()
 	dnsgroup.RegisterTransport(dnsRegistry)
+	dnscount.Reset()
 	ctx = box.Context(
 		ctx,
 		include.InboundRegistry(),
@@ -131,6 +133,8 @@ func startBox(path, clashBase string) error {
 		cancel()
 		return fmt.Errorf("create box: %w", err)
 	}
+	// Count hijack-dns + cache hits (Clash API strips DNS from /connections).
+	dnscount.PatchBox(inst)
 	if err := inst.Start(); err != nil {
 		cancel()
 		_ = inst.Close()
@@ -160,6 +164,7 @@ func stopBox() error {
 	instance = nil
 	cancelFn = nil
 	running = false
+	dnscount.Reset()
 	if err != nil {
 		lastError = err.Error()
 		return err

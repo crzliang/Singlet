@@ -4,8 +4,10 @@ import Foundation
 /// Privileged helper for TUN: listens on a Unix socket and runs libsingboxcore as root.
 /// Installed to `/Library/PrivilegedHelperTools/com.singlet.PrivilegedHelper`.
 
-let helperVersion = "SingletPrivilegedHelper 0.3.2"
+let helperVersion = "SingletPrivilegedHelper 0.3.4"
 let socketPath = "/var/run/com.singlet.helper.sock"
+/// Serialize start/stop so concurrent Flutter retries don't stack Close().
+private let helperCoreOpLock = NSLock()
 
 @main
 struct SingletPrivilegedHelper {
@@ -41,6 +43,7 @@ final class HelperCoreEngine {
   private let lock = NSRecursiveLock()
   private var handle: UnsafeMutableRawPointer?
   private var loadedPath: String = ""
+  private var loadedFingerprint: String = ""
 
   typealias StartFn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Int32
   typealias StopFn = @convention(c) () -> Int32
@@ -107,8 +110,21 @@ final class HelperCoreEngine {
     }
   }
 
+  private func dylibFingerprint(_ path: String) -> String {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else {
+      return path
+    }
+    let size = attrs[.size] as? NSNumber ?? 0
+    let mtime = attrs[.modificationDate] as? Date ?? .distantPast
+    return "\(path)|\(size)|\(mtime.timeIntervalSince1970)"
+  }
+
   private func loadDylib(_ path: String) throws {
-    if handle != nil, loadedPath == path { return }
+    // Same path can still be a newly-built dylib — reload when mtime/size changes.
+    let fp = dylibFingerprint(path)
+    if handle != nil, loadedPath == path, loadedFingerprint == fp {
+      return
+    }
     if let handle {
       dlclose(handle)
       self.handle = nil
@@ -141,6 +157,7 @@ final class HelperCoreEngine {
     }
     handle = h
     loadedPath = path
+    loadedFingerprint = fp
   }
 
   private func lastError() -> String? {
@@ -244,6 +261,9 @@ enum HelperSocketServer {
         if let oslimit = mem["oslimit"] ?? mem["sys"] {
           payload["oslimit"] = oslimit
         }
+        if let dnsQueries = mem["dnsQueries"] {
+          payload["dnsQueries"] = dnsQueries
+        }
         if !mem.isEmpty {
           payload["memory"] = mem
         }
@@ -258,6 +278,8 @@ enum HelperSocketServer {
         }
         let api = (obj["clashApi"] as? String) ?? "http://127.0.0.1:9090"
         fputs("helper: start config=\(configPath) dylib=\(dylibPath)\n", stderr)
+        helperCoreOpLock.lock()
+        defer { helperCoreOpLock.unlock() }
         // Always stop previous helper-side instance first.
         try? HelperCoreEngine.shared.stop()
         try HelperCoreEngine.shared.start(
@@ -269,8 +291,19 @@ enum HelperSocketServer {
         fputs("helper: start done running=\(running)\n", stderr)
         reply(fd, ["ok": true, "running": running])
       case "stop":
-        try HelperCoreEngine.shared.stop()
-        reply(fd, ["ok": true, "running": false])
+        // App handoff binds the same mixed/Clash ports — Close() can take
+        // several seconds under TUN load; wait until unbound before ack.
+        let ports = parsePorts(obj["ports"]) ?? [7890, 9090]
+        helperCoreOpLock.lock()
+        defer { helperCoreOpLock.unlock() }
+        try? HelperCoreEngine.shared.stop()
+        let free = waitPortsFree(ports, attempts: 100)
+        fputs("helper: stop portsFree=\(free) ports=\(ports)\n", stderr)
+        reply(fd, [
+          "ok": true,
+          "running": false,
+          "portsFree": free,
+        ])
       default:
         reply(fd, ["ok": false, "error": "unknown op \(op)"])
       }
@@ -281,6 +314,63 @@ enum HelperSocketServer {
       fputs("helper: error \(error.localizedDescription)\n", stderr)
       reply(fd, ["ok": false, "error": error.localizedDescription])
     }
+  }
+
+  private static func parsePorts(_ raw: Any?) -> [Int]? {
+    if let arr = raw as? [Int], !arr.isEmpty { return arr }
+    if let arr = raw as? [NSNumber], !arr.isEmpty {
+      return arr.map { $0.intValue }
+    }
+    return nil
+  }
+
+  /// Connect-probe: free when nothing accepts on 127.0.0.1:port.
+  private static func isLocalListening(_ port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return false }
+    defer { close(fd) }
+
+    let flags = fcntl(fd, F_GETFL, 0)
+    _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+    var addr = sockaddr_in()
+    addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = in_port_t(UInt16(port).bigEndian)
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+    let rc: Int32 = withUnsafePointer(to: &addr) { ptr in
+      ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+        Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    if rc == 0 { return true }
+    if errno == ECONNREFUSED { return false }
+    if errno == EISCONN { return true }
+    if errno == EINPROGRESS || errno == EALREADY {
+      var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+      let pr = poll(&pfd, 1, 100)
+      if pr > 0 {
+        var soError: Int32 = 0
+        var len = socklen_t(MemoryLayout<Int32>.size)
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, &soError, &len)
+        return soError == 0
+      }
+    }
+    return false
+  }
+
+  /// ~0.05–0.15s × attempts — default 100 ≈ up to ~12s.
+  private static func waitPortsFree(_ ports: [Int], attempts: Int) -> Bool {
+    guard !ports.isEmpty else { return true }
+    for i in 0..<attempts {
+      if !ports.contains(where: isLocalListening) {
+        return true
+      }
+      let ms: useconds_t = i < 20 ? 50_000 : (i < 60 ? 100_000 : 150_000)
+      usleep(ms)
+    }
+    return !ports.contains(where: isLocalListening)
   }
 
   private static func reply(_ fd: Int32, _ obj: [String: Any]) {

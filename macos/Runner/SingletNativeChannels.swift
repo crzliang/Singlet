@@ -236,13 +236,27 @@ enum SingletNativeChannels {
           }
         }
       case "tunStop":
+        let args = call.arguments as? [String: Any]
+        let httpPort = (args?["httpPort"] as? Int) ?? 7890
+        let apiPort = (args?["apiPort"] as? Int) ?? 9090
         DispatchQueue.global(qos: .userInitiated).async {
           do {
             // Clear TUN DNS first (LAN DHCP), then stop the helper core.
             try? SystemProxyManager.disableTunDns()
-            let payload = try HelperSocketClient.stopTun()
+            let ports = Array(Set([httpPort, apiPort].filter { $0 > 0 }))
+            let payload = try HelperSocketClient.stopTun(ports: ports)
+            // Extra drain in-process: covers a wedged helper that acked early.
+            if payload["portsFree"] as? Bool != true {
+              _ = PortProbe.waitUntilFree(ports: ports, attempts: 60, sleepMs: 100)
+            }
             DispatchQueue.main.async { result(payload) }
           } catch {
+            // Still try to free ports so handoff can proceed after a timed-out Close.
+            _ = PortProbe.waitUntilFree(
+              ports: [httpPort, apiPort],
+              attempts: 40,
+              sleepMs: 100
+            )
             DispatchQueue.main.async {
               result(
                 FlutterError(

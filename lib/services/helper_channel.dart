@@ -81,12 +81,17 @@ class HelperChannel {
       final raw = await _channel.invokeMethod<dynamic>('tunStatus');
       if (raw is Map) {
         final m = Map<String, dynamic>.from(raw);
+        final memory = m['memory'];
+        final memMap = memory is Map
+            ? Map<String, dynamic>.from(memory)
+            : const <String, dynamic>{};
         return TunHelperStatus(
           reachable: m['ok'] == true,
           running: m['running'] == true,
           version: m['version']?.toString(),
           inuse: _asInt(m['inuse']),
           oslimit: _asInt(m['oslimit']),
+          dnsQueries: _asInt(m['dnsQueries']) ?? _asInt(memMap['dnsQueries']),
         );
       }
     } on MissingPluginException {
@@ -124,9 +129,15 @@ class HelperChannel {
     }
   }
 
-  Future<void> tunStop() async {
+  Future<void> tunStop({
+    int httpPort = 7890,
+    int apiPort = 9090,
+  }) async {
     try {
-      await _channel.invokeMethod<void>('tunStop');
+      await _channel.invokeMethod<void>('tunStop', {
+        'httpPort': httpPort,
+        'apiPort': apiPort,
+      });
     } on MissingPluginException {
       // no-op
     } on PlatformException catch (e) {
@@ -142,6 +153,7 @@ class TunHelperStatus {
     this.version,
     this.error,
     this.inuse,
+    this.dnsQueries,
     this.oslimit,
   });
 
@@ -150,6 +162,7 @@ class TunHelperStatus {
   final String? version;
   final String? error;
   final int? inuse;
+  final int? dnsQueries;
   final int? oslimit;
 }
 
