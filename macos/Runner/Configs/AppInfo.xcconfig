@@ -1,0 +1,4 @@
+// Application-level settings for the Runner target.
+PRODUCT_NAME = Singlet
+PRODUCT_BUNDLE_IDENTIFIER = com.singlet.app
+PRODUCT_COPYRIGHT = Copyright © 2026 Singlet. All rights reserved.

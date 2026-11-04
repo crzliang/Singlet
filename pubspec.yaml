@@ -1,0 +1,27 @@
+name: singlet
+description: Singlet — macOS Flutter client for embedded sing-box (Material 3 MVP scaffold).
+publish_to: "none"
+version: 0.2.2+4
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  ffi: ^2.1.4
+  path_provider: ^2.1.6
+  http: ^1.6.0
+  yaml: ^3.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/configs/minimal-direct.json
+
