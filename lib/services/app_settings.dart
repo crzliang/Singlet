@@ -54,6 +54,7 @@ class DnsSettings {
     required this.localAddresses,
     required this.remoteAddresses,
     this.strategy = DnsQueryStrategy.race,
+    this.intranetSuffixes = defaultIntranetSuffixes,
   });
 
   /// Direct / China-side resolvers (used for Direct mode + domain resolve).
@@ -65,21 +66,41 @@ class DnsSettings {
   /// Multi-address strategy for each role (local / remote group).
   final DnsQueryStrategy strategy;
 
+  /// Domain suffixes resolved via LAN DNS under TUN hijack (not remote DoH).
+  ///
+  /// Entries may be `corp.local` or `.corp.local`; also accepts full domains.
+  final List<String> intranetSuffixes;
+
+  /// Built-in LAN / split-horizon suffixes (always merged unless user clears all
+  /// and replaces — empty list still keeps these defaults via [fromJson]).
+  static const defaultIntranetSuffixes = <String>[
+    'local',
+    'lan',
+    'internal',
+    'intranet',
+    'corp',
+    'home',
+    'localdomain',
+  ];
+
   static const defaults = DnsSettings(
     localAddresses: ['223.5.5.5'],
     remoteAddresses: ['https://1.1.1.1/dns-query'],
     strategy: DnsQueryStrategy.race,
+    intranetSuffixes: defaultIntranetSuffixes,
   );
 
   DnsSettings copyWith({
     List<String>? localAddresses,
     List<String>? remoteAddresses,
     DnsQueryStrategy? strategy,
+    List<String>? intranetSuffixes,
   }) {
     return DnsSettings(
       localAddresses: localAddresses ?? this.localAddresses,
       remoteAddresses: remoteAddresses ?? this.remoteAddresses,
       strategy: strategy ?? this.strategy,
+      intranetSuffixes: intranetSuffixes ?? this.intranetSuffixes,
     );
   }
 
@@ -87,6 +108,7 @@ class DnsSettings {
         'localAddresses': localAddresses,
         'remoteAddresses': remoteAddresses,
         'strategy': strategy.wireValue,
+        'intranetSuffixes': intranetSuffixes,
       };
 
   factory DnsSettings.fromJson(Map<String, dynamic>? json) {
@@ -96,6 +118,9 @@ class DnsSettings {
       remoteAddresses:
           _stringList(json['remoteAddresses'], defaults.remoteAddresses),
       strategy: DnsQueryStrategyX.fromWire(json['strategy']?.toString()),
+      intranetSuffixes: json.containsKey('intranetSuffixes')
+          ? _stringListAllowEmpty(json['intranetSuffixes'])
+          : List<String>.from(defaultIntranetSuffixes),
     );
   }
 
@@ -107,6 +132,16 @@ class DnsSettings {
       if (s.isNotEmpty) out.add(s);
     }
     return out.isEmpty ? List<String>.from(fallback) : out;
+  }
+
+  static List<String> _stringListAllowEmpty(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <String>[];
+    for (final item in raw) {
+      final s = '$item'.trim();
+      if (s.isNotEmpty) out.add(s);
+    }
+    return out;
   }
 
   /// Parse multiline / comma-separated editor text into addresses.
@@ -121,6 +156,7 @@ class DnsSettings {
 
   String localAddressesText() => localAddresses.join('\n');
   String remoteAddressesText() => remoteAddresses.join('\n');
+  String intranetSuffixesText() => intranetSuffixes.join('\n');
 }
 
 /// Local proxy listen ports (0 = disabled for http / socks).

@@ -29,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _settingsStore = AppSettingsStore();
   final _localDnsCtrl = TextEditingController();
   final _remoteDnsCtrl = TextEditingController();
+  final _intranetDnsCtrl = TextEditingController();
   final _mixedPortCtrl = TextEditingController();
   final _httpPortCtrl = TextEditingController();
   final _socksPortCtrl = TextEditingController();
@@ -63,6 +64,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _localDnsCtrl.addListener(_onDnsEdited);
     _remoteDnsCtrl.addListener(_onDnsEdited);
+    _intranetDnsCtrl.addListener(_onDnsEdited);
     _mixedPortCtrl.addListener(_onPortsEdited);
     _httpPortCtrl.addListener(_onPortsEdited);
     _socksPortCtrl.addListener(_onPortsEdited);
@@ -75,11 +77,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _localDnsCtrl.removeListener(_onDnsEdited);
     _remoteDnsCtrl.removeListener(_onDnsEdited);
+    _intranetDnsCtrl.removeListener(_onDnsEdited);
     _mixedPortCtrl.removeListener(_onPortsEdited);
     _httpPortCtrl.removeListener(_onPortsEdited);
     _socksPortCtrl.removeListener(_onPortsEdited);
     _localDnsCtrl.dispose();
     _remoteDnsCtrl.dispose();
+    _intranetDnsCtrl.dispose();
     _mixedPortCtrl.dispose();
     _httpPortCtrl.dispose();
     _socksPortCtrl.dispose();
@@ -103,6 +107,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _portsHydrating = true;
     _localDnsCtrl.text = settings.dns.localAddressesText();
     _remoteDnsCtrl.text = settings.dns.remoteAddressesText();
+    _intranetDnsCtrl.text = settings.dns.intranetSuffixesText();
     _mixedPortCtrl.text = '${settings.ports.mixedPort}';
     _httpPortCtrl.text = '${settings.ports.httpPort}';
     _socksPortCtrl.text = '${settings.ports.socksPort}';
@@ -292,6 +297,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _saveDnsSettings() async {
     final local = DnsSettings.parseAddressText(_localDnsCtrl.text);
     final remote = DnsSettings.parseAddressText(_remoteDnsCtrl.text);
+    final intranet = DnsSettings.parseAddressText(_intranetDnsCtrl.text);
     if (local.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('直连 DNS 至少需要一个地址')),
@@ -311,14 +317,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         localAddresses: local,
         remoteAddresses: remote,
         strategy: _dnsStrategy,
+        intranetSuffixes: intranet,
       );
       final current = await _settingsStore.load();
       await _settingsStore.save(current.copyWith(dns: dns));
       await widget.configStore.reapplyUserSettings(dns: dns);
+      final path = await widget.configStore.resolveDefaultConfigPath();
+      final suffix = await _reloadCoreAfterRouteChange(path);
       if (!mounted) return;
       _dnsHydrating = true;
       _localDnsCtrl.text = dns.localAddressesText();
       _remoteDnsCtrl.text = dns.remoteAddressesText();
+      _intranetDnsCtrl.text = dns.intranetSuffixesText();
       _dnsHydrating = false;
       setState(() {
         _dnsStrategy = dns.strategy;
@@ -326,9 +336,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _dnsDirty = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('DNS 已保存；重新连接后生效'),
-        ),
+        SnackBar(content: Text('DNS 已保存$suffix')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -419,6 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _dnsHydrating = true;
     _localDnsCtrl.text = dns.localAddressesText();
     _remoteDnsCtrl.text = dns.remoteAddressesText();
+    _intranetDnsCtrl.text = dns.intranetSuffixesText();
     _dnsHydrating = false;
     setState(() {
       _dnsStrategy = dns.strategy;
@@ -823,9 +832,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   decoration: const InputDecoration(
                     labelText: '直连 DNS',
                     alignLabelWithHint: true,
-                    hintText: '223.5.5.5',
+                    hintText: '192.168.100.1\n223.5.5.5',
                     border: OutlineInputBorder(),
-                    helperText: 'Direct 模式与域名解析使用',
+                    helperText: '请包含路由器/内网 DNS（私网 IP），TUN 下内网域名会优先问它',
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -839,6 +848,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     hintText: 'https://1.1.1.1/dns-query',
                     border: OutlineInputBorder(),
                     helperText: '经节点出站查询（建议 DoH/DoT）',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _intranetDnsCtrl,
+                  minLines: 2,
+                  maxLines: 6,
+                  decoration: const InputDecoration(
+                    labelText: '内网域名后缀',
+                    alignLabelWithHint: true,
+                    hintText: 'local\nlan\ncorp.example',
+                    border: OutlineInputBorder(),
+                    helperText:
+                        'TUN 劫持 DNS 时走局域网 DNS；无点主机名（如 nas）也会走内网解析',
                   ),
                 ),
                 const SizedBox(height: 12),

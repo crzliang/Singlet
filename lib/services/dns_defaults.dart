@@ -11,6 +11,7 @@ class DnsDefaults {
   DnsDefaults._();
 
   static const localTag = 'local-dns';
+  static const lanTag = 'lan-dns';
   static const remoteTag = 'remote-dns';
   static const systemTag = 'system';
   static const groupType = 'singlet-group';
@@ -44,6 +45,11 @@ class DnsDefaults {
     servers.add({'type': 'local', 'tag': systemTag});
     final localPrimary = localLogical ?? systemTag;
 
+    // Dedicated LAN resolver: private IPs from 直连 DNS only.
+    // Must NOT include public DNS — NXDOMAIN from 223.5.5.5 is a "success" and
+    // would hide intranet names under race/round_robin/fallback groups.
+    final lanPrimary = _appendLanDns(servers, localAddrs) ?? localPrimary;
+
     String? remotePrimary;
     if (useRemote) {
       final remoteAddrs = dns.remoteAddresses.isEmpty
@@ -58,21 +64,108 @@ class DnsDefaults {
       );
     }
 
+    final dnsRules = <Map<String, dynamic>>[
+      ..._intranetDnsRules(dns, lanPrimary),
+      if (useRemote && remotePrimary != null)
+        {
+          'clash_mode': 'Direct',
+          'server': localPrimary,
+        },
+    ];
+
     return {
       'servers': servers,
-      'rules': [
-        if (useRemote && remotePrimary != null)
-          {
-            'clash_mode': 'Direct',
-            'server': localPrimary,
-          },
-      ],
+      'rules': dnsRules,
       'final': remotePrimary ?? localPrimary,
       // ipv4_only: macOS TUN often has no working IPv6 uplink; prefer_ipv4 still
       // returns AAAA and apps like WeChat Moments stick to broken v6 dials.
       'strategy': 'ipv4_only',
       'independent_cache': true,
     };
+  }
+
+  /// DNS rules so TUN hijack still resolves intranet / split-horizon names.
+  static List<Map<String, dynamic>> _intranetDnsRules(
+    DnsSettings dns,
+    String lanServer,
+  ) {
+    final suffixes = <String>{};
+    for (final raw in dns.intranetSuffixes) {
+      final n = _normalizeSuffix(raw);
+      if (n != null) suffixes.add(n);
+    }
+    return [
+      if (suffixes.isNotEmpty)
+        {
+          'domain_suffix': suffixes.toList()..sort(),
+          'server': lanServer,
+        },
+      // Bare hostnames (printer, nas, gateway) — common on LAN.
+      {
+        'domain_regex': [r'^[^.]+$'],
+        'server': lanServer,
+      },
+    ];
+  }
+
+  static String? _normalizeSuffix(String raw) {
+    var s = raw.trim().toLowerCase();
+    if (s.isEmpty) return null;
+    while (s.startsWith('.')) {
+      s = s.substring(1);
+    }
+    if (s.isEmpty || s.contains('://') || s.contains(' ')) return null;
+    return s;
+  }
+
+  /// Build [lanTag] from RFC1918 (etc.) addresses in [localAddrs].
+  static String? _appendLanDns(
+    List<Map<String, dynamic>> servers,
+    List<String> localAddrs,
+  ) {
+    final lanAddrs = <String>[];
+    for (final raw in localAddrs) {
+      final host = _hostFromAddress(raw);
+      if (host != null && _isPrivateIp(host)) {
+        lanAddrs.add(raw.trim());
+      }
+    }
+    if (lanAddrs.isEmpty) return null;
+    return _appendAddressGroup(
+      servers,
+      groupTag: lanTag,
+      addresses: lanAddrs,
+      // Prefer gateway DNS in listed order; don't race public NXDOMAIN.
+      strategy: DnsQueryStrategy.fallback,
+    );
+  }
+
+  static bool _isPrivateIp(String host) {
+    if (host.contains(':')) {
+      final h = host.toLowerCase();
+      return h == '::1' ||
+          h.startsWith('fc') ||
+          h.startsWith('fd') ||
+          h.startsWith('fe80:');
+    }
+    final parts = host.split('.');
+    if (parts.length != 4) return false;
+    final nums = <int>[];
+    for (final p in parts) {
+      final n = int.tryParse(p);
+      if (n == null || n < 0 || n > 255) return false;
+      nums.add(n);
+    }
+    final a = nums[0];
+    final b = nums[1];
+    if (a == 10) return true;
+    if (a == 127) return true;
+    if (a == 192 && b == 168) return true;
+    if (a == 172 && b >= 16 && b <= 31) return true;
+    // CGNAT / Tailscale-ish
+    if (a == 100 && b >= 64 && b <= 127) return true;
+    if (a == 169 && b == 254) return true;
+    return false;
   }
 
   /// Ensure [config] has dns + hijack-dns route rule (idempotent).
