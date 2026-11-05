@@ -11,6 +11,10 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     SingletNativeChannels.register(messenger: flutterViewController.engine.binaryMessenger)
 
+    // No product name in the title bar.
+    self.title = ""
+    self.titleVisibility = .hidden
+
     super.awakeFromNib()
   }
 }

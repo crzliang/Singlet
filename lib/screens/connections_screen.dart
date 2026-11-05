@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/clash_api_client.dart';
+import '../utils/display_tags.dart';
 import '../utils/proxy_region_flag.dart';
 
 /// Clash Verge–style「实时连接」table (Material 3).
@@ -21,6 +22,10 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   bool _reachable = false;
   String _query = '';
   List<ClashConnectionRow> _rows = const [];
+
+  /// Column index matching [DataTable.columns] (null = API order).
+  int? _sortColumnIndex;
+  bool _sortAscending = false;
 
   @override
   void initState() {
@@ -45,15 +50,68 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
     });
   }
 
+  void _onSort(int columnIndex, bool ascending) {
+    setState(() {
+      _sortColumnIndex = columnIndex;
+      _sortAscending = ascending;
+    });
+  }
+
   List<ClashConnectionRow> get _filtered {
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _rows;
-    return _rows.where((r) {
-      return r.process.toLowerCase().contains(q) ||
-          r.target.toLowerCase().contains(q) ||
-          r.rule.toLowerCase().contains(q) ||
-          r.outbound.toLowerCase().contains(q);
-    }).toList();
+    final base = q.isEmpty
+        ? List<ClashConnectionRow>.from(_rows)
+        : _rows.where((r) {
+            final rule = DisplayTags.sanitize(r.rule).toLowerCase();
+            final outbound =
+                DisplayTags.sanitize(r.outbound).toLowerCase();
+            return r.process.toLowerCase().contains(q) ||
+                r.target.toLowerCase().contains(q) ||
+                rule.contains(q) ||
+                r.rule.toLowerCase().contains(q) ||
+                outbound.contains(q) ||
+                r.outbound.toLowerCase().contains(q);
+          }).toList();
+
+    final col = _sortColumnIndex;
+    if (col == null) return base;
+
+    int cmp(ClashConnectionRow a, ClashConnectionRow b) {
+      switch (col) {
+        case 0:
+          return a.process.toLowerCase().compareTo(b.process.toLowerCase());
+        case 1:
+          return a.target.toLowerCase().compareTo(b.target.toLowerCase());
+        case 2:
+          return DisplayTags.sanitize(a.rule)
+              .toLowerCase()
+              .compareTo(DisplayTags.sanitize(b.rule).toLowerCase());
+        case 3:
+          return DisplayTags.sanitize(
+            ProxyRegionFlag.displayName(a.outbound),
+          ).toLowerCase().compareTo(
+                DisplayTags.sanitize(
+                  ProxyRegionFlag.displayName(b.outbound),
+                ).toLowerCase(),
+              );
+        case 4:
+          return a.downloadSpeed.compareTo(b.downloadSpeed);
+        case 5:
+          return a.uploadSpeed.compareTo(b.uploadSpeed);
+        case 6:
+          return a.download.compareTo(b.download);
+        case 7:
+          return a.upload.compareTo(b.upload);
+        default:
+          return 0;
+      }
+    }
+
+    base.sort((a, b) {
+      final r = cmp(a, b);
+      return _sortAscending ? r : -r;
+    });
+    return base;
   }
 
   Future<void> _closeOne(ClashConnectionRow row) async {
@@ -176,28 +234,46 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
                                       dataRowMaxHeight: 56,
                                       columnSpacing: 20,
                                       horizontalMargin: 16,
-                                      columns: const [
-                                        DataColumn(label: Text('进程')),
-                                        DataColumn(label: Text('目标')),
-                                        DataColumn(label: Text('规则')),
-                                        DataColumn(label: Text('出口')),
+                                      sortColumnIndex: _sortColumnIndex,
+                                      sortAscending: _sortAscending,
+                                      columns: [
                                         DataColumn(
-                                          label: Text('下载'),
-                                          numeric: true,
+                                          label: const Text('进程'),
+                                          onSort: _onSort,
                                         ),
                                         DataColumn(
-                                          label: Text('上传'),
-                                          numeric: true,
+                                          label: const Text('目标'),
+                                          onSort: _onSort,
                                         ),
                                         DataColumn(
-                                          label: Text('下载总量'),
-                                          numeric: true,
+                                          label: const Text('规则'),
+                                          onSort: _onSort,
                                         ),
                                         DataColumn(
-                                          label: Text('上传总量'),
-                                          numeric: true,
+                                          label: const Text('出口'),
+                                          onSort: _onSort,
                                         ),
-                                        DataColumn(label: Text('')),
+                                        DataColumn(
+                                          label: const Text('下载'),
+                                          numeric: true,
+                                          onSort: _onSort,
+                                        ),
+                                        DataColumn(
+                                          label: const Text('上传'),
+                                          numeric: true,
+                                          onSort: _onSort,
+                                        ),
+                                        DataColumn(
+                                          label: const Text('下载总量'),
+                                          numeric: true,
+                                          onSort: _onSort,
+                                        ),
+                                        DataColumn(
+                                          label: const Text('上传总量'),
+                                          numeric: true,
+                                          onSort: _onSort,
+                                        ),
+                                        const DataColumn(label: Text('')),
                                       ],
                                       rows: [
                                         for (var i = 0; i < filtered.length; i++)
@@ -220,7 +296,10 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
   DataRow _row(BuildContext context, ClashConnectionRow r, bool odd) {
     final scheme = Theme.of(context).colorScheme;
     final flag = ProxyRegionFlag.flagFor(r.outbound) ?? '';
-    final outboundLabel = ProxyRegionFlag.displayName(r.outbound);
+    final outboundLabel = DisplayTags.sanitize(
+      ProxyRegionFlag.displayName(r.outbound),
+    );
+    final ruleLabel = r.rule.isEmpty ? '—' : DisplayTags.sanitize(r.rule);
     return DataRow(
       color: WidgetStatePropertyAll(
         odd ? scheme.surfaceContainerLow.withValues(alpha: 0.45) : null,
@@ -246,7 +325,7 @@ class _ConnectionsScreenState extends State<ConnectionsScreen> {
             ),
           ),
         ),
-        DataCell(Text(r.rule.isEmpty ? '—' : r.rule)),
+        DataCell(Text(ruleLabel)),
         DataCell(
           SizedBox(
             width: 160,

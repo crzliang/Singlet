@@ -114,16 +114,8 @@ class _AppShellState extends State<AppShell> {
               }
             },
             labelType: NavigationRailLabelType.all,
-            leading: Padding(
-              padding: const EdgeInsets.only(top: 12, bottom: 8),
-              child: Text(
-                'Singlet',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-              ),
-            ),
+            // No product name in the rail — keep a small top inset only.
+            leading: const SizedBox(height: 12),
             destinations: _destinations,
           ),
           const VerticalDivider(width: 1),

@@ -56,6 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _connLive = false;
   int? _memInuse;
   String _memSource = '';
+  int? _appMemFootprint;
   bool _helperInstalled = false;
 
   final _systemProxyChannel = SystemProxyChannel();
@@ -67,10 +68,12 @@ class _HomeScreenState extends State<HomeScreen> {
   // Sparkline history (last N speed samples) — must be growable for removeAt/add.
   final List<double> _upHistory = List<double>.filled(24, 0, growable: true);
   final List<double> _downHistory = List<double>.filled(24, 0, growable: true);
+  final List<double> _appMemHistory = List<double>.filled(24, 0, growable: true);
 
   DateTime? _connectedSince;
   int? _googleDelay;
   int? _githubDelay;
+  int? _baiduDelay;
 
   @override
   void initState() {
@@ -482,6 +485,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     if (!running) {
+      final appMem = await _resolveAppMemory();
+      if (!mounted) return;
       setState(() {
         _running = false;
         _upSpeed = 0;
@@ -489,6 +494,12 @@ class _HomeScreenState extends State<HomeScreen> {
         _trafficLive = false;
         _connLive = false;
         _modeLive = false;
+        _memInuse = null;
+        _memSource = '';
+        _appMemFootprint = appMem;
+        if (appMem != null && appMem > 0) {
+          _pushHistory(_appMemHistory, appMem.toDouble());
+        }
       });
       return;
     }
@@ -500,12 +511,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final connF = widget.clashApi.fetchConnections();
     final cfgF = widget.clashApi.fetchConfigs();
     final memF = _resolveMemory();
+    final appMemF = _resolveAppMemory();
     final dnsF = _resolveDnsQueries();
 
     final traffic = await trafficF;
     final conn = await connF;
     final cfg = await cfgF;
     final mem = await memF;
+    final appMem = await appMemF;
     final dnsQueries = await dnsF;
     if (!mounted) return;
 
@@ -530,6 +543,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _memInuse = mem.$1;
       _memSource = mem.$2;
+      _appMemFootprint = appMem;
+      if (appMem != null && appMem > 0) {
+        _pushHistory(_appMemHistory, appMem.toDouble());
+      }
     });
   }
 
@@ -564,6 +581,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return (coreInuse, '内核 MemStats');
     }
     return (null, '');
+  }
+
+  /// Activity Monitor–style footprint of Singlet.app (Flutter UI process).
+  Future<int?> _resolveAppMemory() async {
+    final raw = await widget.core.appMemory();
+    return _asMemInt(raw['footprint']) ?? _asMemInt(raw['resident']);
   }
 
   /// Cumulative DNS Exchange count from embedded core (works with hijack-dns).
@@ -613,16 +636,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _probeDelays() async {
     final target = await _delayProbeTarget();
-    // Proxy-path health: Google / GitHub through current 节点选择 (or direct).
+    // Proxy-path health through current 节点选择 (or direct).
     final g = await widget.clashApi.testDelay(name: target);
     final gh = await widget.clashApi.testDelay(
       name: target,
       url: 'https://www.github.com/favicon.ico',
     );
+    final bd = await widget.clashApi.testDelay(
+      name: target,
+      url: 'https://www.baidu.com/favicon.ico',
+    );
     if (!mounted) return;
     setState(() {
       _googleDelay = g;
       _githubDelay = gh;
+      _baiduDelay = bd;
     });
   }
 
@@ -763,9 +791,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   delays: _DelayCard(
                     google: _googleDelay,
                     github: _githubDelay,
+                    baidu: _baiduDelay,
                     onRefresh: _probeDelays,
                   ),
-                  memory: _MemoryCard(inuse: _memInuse, source: _memSource),
+                  memory: _MemoryCard(
+                    appFootprint: _appMemFootprint,
+                    appHistory: _appMemHistory,
+                    coreInuse: _memInuse,
+                    coreSource: _memSource,
+                  ),
                   stats: _StatsCard(
                     connections: _connCount,
                     totalSeen: _connTotalSeen,
@@ -1079,15 +1113,26 @@ class _TrafficCard extends StatelessWidget {
 }
 
 class _SparkPainter extends CustomPainter {
-  _SparkPainter({required this.values, required this.color});
+  _SparkPainter({
+    required this.values,
+    required this.color,
+    this.stretchRange = false,
+  });
 
   final List<double> values;
   final Color color;
+
+  /// When true, scale to [min, max] so small memory drifts stay visible.
+  final bool stretchRange;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (values.isEmpty) return;
     final maxV = values.reduce((a, b) => a > b ? a : b);
+    final minV = stretchRange
+        ? values.reduce((a, b) => a < b ? a : b)
+        : 0.0;
+    final span = maxV - minV;
     final paint = Paint()
       ..color = color
       ..strokeWidth = 2
@@ -1096,7 +1141,7 @@ class _SparkPainter extends CustomPainter {
     final path = Path();
     for (var i = 0; i < values.length; i++) {
       final x = size.width * i / (values.length - 1);
-      final norm = maxV <= 0 ? 0.0 : values[i] / maxV;
+      final norm = span <= 0 ? 0.5 : (values[i] - minV) / span;
       final y = size.height - norm * size.height;
       if (i == 0) {
         path.moveTo(x, y);
@@ -1109,7 +1154,9 @@ class _SparkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SparkPainter oldDelegate) =>
-      oldDelegate.values != values || oldDelegate.color != color;
+      oldDelegate.values != values ||
+      oldDelegate.color != color ||
+      oldDelegate.stretchRange != stretchRange;
 }
 
 class _ModeCard extends StatelessWidget {
@@ -1228,11 +1275,13 @@ class _DelayCard extends StatelessWidget {
   const _DelayCard({
     required this.google,
     required this.github,
+    required this.baidu,
     required this.onRefresh,
   });
 
   final int? google;
   final int? github;
+  final int? baidu;
   final VoidCallback onRefresh;
 
   String _fmt(int? ms) => ms == null ? '—' : '$ms ms';
@@ -1258,6 +1307,8 @@ class _DelayCard extends StatelessWidget {
           _kv(context, 'Google', _fmt(google)),
           const SizedBox(height: 6),
           _kv(context, 'GitHub', _fmt(github)),
+          const SizedBox(height: 6),
+          _kv(context, 'Baidu', _fmt(baidu)),
         ],
       ),
     );
@@ -1275,34 +1326,65 @@ class _DelayCard extends StatelessWidget {
 }
 
 class _MemoryCard extends StatelessWidget {
-  const _MemoryCard({required this.inuse, required this.source});
+  const _MemoryCard({
+    required this.appFootprint,
+    required this.appHistory,
+    required this.coreInuse,
+    required this.coreSource,
+  });
 
-  final int? inuse;
-  final String source;
+  final int? appFootprint;
+  final List<double> appHistory;
+  final int? coreInuse;
+  final String coreSource;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final has = inuse != null;
+    final hasApp = appFootprint != null && appFootprint! > 0;
+    final hasCore = coreInuse != null && coreInuse! > 0;
+    final coreLabel = coreSource.isEmpty ? '内核堆' : coreSource;
     return _DashCard(
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('内存', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          Text(
-            has ? formatBytes(inuse!) : '—',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('内存', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                Text(
+                  hasApp ? formatBytes(appFootprint!) : '—',
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                 ),
+                Text(
+                  hasApp
+                      ? (hasCore
+                          ? '应用 · $coreLabel ${formatBytes(coreInuse!)}'
+                          : '应用进程')
+                      : (hasCore
+                          ? '$coreLabel ${formatBytes(coreInuse!)}'
+                          : '暂无数据'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
           ),
-          Text(
-            has
-                ? (source.isEmpty ? '内核堆' : source)
-                : '内核未提供',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+          SizedBox(
+            width: 88,
+            height: 44,
+            child: CustomPaint(
+              painter: _SparkPainter(
+                values: appHistory,
+                color: hasApp ? scheme.primary : scheme.outlineVariant,
+                stretchRange: true,
+              ),
+            ),
           ),
         ],
       ),

@@ -33,6 +33,9 @@ enum SingletNativeChannels {
         result(core.statusJSON())
       case "memory":
         result(core.memoryJSON())
+      case "appMemory":
+        // Singlet.app process footprint (not Go heap).
+        result(ProcessMemory.appSnapshot())
       case "start":
         guard let args = call.arguments as? [String: Any],
               let path = args["configPath"] as? String,

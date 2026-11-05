@@ -57,6 +57,21 @@ class SingboxCoreChannel {
     return const {};
   }
 
+  /// Singlet.app process memory (`footprint` ≈ Activity Monitor Memory).
+  Future<Map<String, dynamic>> appMemory() async {
+    try {
+      final raw = await _channel.invokeMethod<dynamic>('appMemory');
+      if (raw is Map) {
+        return Map<String, dynamic>.from(raw);
+      }
+    } on MissingPluginException {
+      // ignore
+    } on PlatformException {
+      // ignore
+    }
+    return const {};
+  }
+
   /// Start embedded core with a sing-box JSON config path and Clash API URL.
   /// Always reloads: if already running, native side stops then starts with [configPath].
   Future<void> start({

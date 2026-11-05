@@ -788,7 +788,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 4),
                 Text(
                   '真实解析，无 fake-ip。每行一个地址，支持 IP / udp:// / tls:// / https://。'
-                  '多个地址由下方策略真正生效（需内核含 singlet-group）。',
+                  '多个地址由下方策略真正生效（需当前内核支持多 DNS 组）。',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
