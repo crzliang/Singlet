@@ -119,7 +119,13 @@ class _AppShellState extends State<AppShell> {
             destinations: _destinations,
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: pages[_index]),
+          // Keep page State (e.g. home uptime) across rail switches.
+          Expanded(
+            child: IndexedStack(
+              index: _index,
+              children: pages,
+            ),
+          ),
         ],
       ),
     );
