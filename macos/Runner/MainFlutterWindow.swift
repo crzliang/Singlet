@@ -11,9 +11,9 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     SingletNativeChannels.register(messenger: flutterViewController.engine.binaryMessenger)
 
-    // No product name in the title bar.
+    // Empty title (no product name). Keep titleVisibility visible —
+    // .hidden has been linked to Impeller zero-size / null render-target crashes.
     self.title = ""
-    self.titleVisibility = .hidden
 
     super.awakeFromNib()
   }

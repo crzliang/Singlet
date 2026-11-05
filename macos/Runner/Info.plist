@@ -28,5 +28,9 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Workaround: Impeller SetupRenderPass null-texture crash on macOS
+	     (io.flutter.raster / KERN_INVALID_ADDRESS). Use Skia until engine fix. -->
+	<key>FLTEnableImpeller</key>
+	<false/>
 </dict>
 </plist>
