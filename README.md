@@ -2,8 +2,21 @@
 
 个人用 **macOS** Flutter 客户端：嵌入式 **sing-box**（Go c-shared）+ Material 3 + Clash YAML / Clash API。
 
-> 独立项目，**未**复用 `singbox-swift` / `sing-box-drover-go`。  
-> 曾用名 `sbg`（已全面更名）；bundle id 现为 `com.singlet.app`（首次启动会尝试迁移旧 Application Support）。
+## 截图
+
+| 首页 | 订阅 |
+|:---:|:---:|
+| ![首页](docs/screenshots/home.png) | ![订阅](docs/screenshots/profiles.png) |
+
+| 节点 | 连接 |
+|:---:|:---:|
+| ![节点](docs/screenshots/proxies.png) | ![连接](docs/screenshots/connections.png) |
+
+| 设置 · 端口 / 分流 | 设置 · DNS / Helper |
+|:---:|:---:|
+| ![设置端口](docs/screenshots/settings-ports.png) | ![设置 Helper](docs/screenshots/settings-helper.png) |
+
+> 订阅名、节点名、连接目标等敏感信息已打码。
 
 ## 架构
 
@@ -56,16 +69,6 @@ flutter run -d macos
 ```
 
 产物为 ad-hoc 签名，适合本机自用；首次打开需右键「打开」。
-
-### 升级自 sbg：卸旧 Helper
-
-```bash
-sudo launchctl bootout system/com.sbg.PrivilegedHelper 2>/dev/null || true
-sudo rm -f /Library/LaunchDaemons/com.sbg.PrivilegedHelper.plist
-sudo rm -f /Library/PrivilegedHelperTools/com.sbg.PrivilegedHelper
-sudo rm -f /var/run/com.sbg.helper.sock
-# 然后在 Singlet 设置里重新安装 Privileged Helper
-```
 
 ## 当前状态
 
