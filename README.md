@@ -81,3 +81,9 @@ sudo rm -f /var/run/com.sbg.helper.sock
 | 启动自动连接内核 | ✅ |
 | TUN + 系统 DNS 劫持 | ✅ |
 | 完整 Clash→sing-box 协议映射 | ❌ 部分（ss/socks/http） |
+
+## License
+
+**GPL-3.0-or-later** — see [`LICENSE`](./LICENSE).
+
+本项目嵌入 / 链接 [sing-box](https://github.com/SagerNet/sing-box)（GPL-3.0-or-later，且其作者另有命名限制）。Singlet 为独立项目，与 sing-box / SagerNet **无隶属或背书关系**。

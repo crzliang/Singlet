@@ -1,0 +1,11 @@
+Singlet
+Copyright (C) 2026 crzliang
+
+Licensed under the GNU General Public License v3.0 or later.
+See the LICENSE file for the full text.
+
+This project embeds / links against sing-box
+(https://github.com/SagerNet/sing-box), which is licensed under
+GPL-3.0-or-later with an additional naming restriction by its authors.
+Singlet is an independent project and is not affiliated with or endorsed
+by sing-box / SagerNet.
